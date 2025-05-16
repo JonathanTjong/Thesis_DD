@@ -5,8 +5,9 @@
 
 The program arguments are as follows (program to run is technically not in program args):
 
+````
 <program to run> <input graph/instance path> <max width for approx DDs> <beam restriction size> <variable ordering nr>
-
+````
 ./misp_mdd_static ../data/generated/suite4/gen_n100_d0_200r0.clq 128 100 7
 
 The variable ordering numbers:
