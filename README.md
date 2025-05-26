@@ -1,6 +1,18 @@
 
 # Thesis notes
 
+## Models
+
+The different models used in the thesis can be found in the "examples" folder. The following models are used:
+
+- misp4_static: Original BDD for the MISP from CODD, altered with static variable orderings
+- misp_mdd_static: MDD encoding MISP with static variable orderings
+- misp_mdd_static_local: MDD encoding MISP with static variable orderings, with extra overhead due to local bound (track local degrees)
+- misp_mdd_dynamic_local: MDD encoding MISP with dynamic variable ordering
+- coloring_beam: graph coloring with beam restriction (DSATUR ordering)
+- misp_mdd_standalone_DD: MISP MDD to measure DD size, merges, transitions, etc.
+- coloring_beam_standalone_DD: graph coloring MDD to measure DD size, merges, transitions, etc.
+
 ## Program args
 
 The program arguments are as follows (program to run is technically not in program args):
