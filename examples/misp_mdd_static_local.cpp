@@ -1,24 +1,14 @@
 #include <queue>
 #include <random>
-
 #include "codd.hpp"
 #include "math.h"
 
 struct MISPMDD {
-   struct Compare {
-      bool operator()(const std::pair<int, int>& a, const std::pair<int, int>& b) const {
-         return a.first < b.first;
-      }
-   };
+   GNSet sel; // set of eligible vertices
+   std::vector<std::pair<int, int>> deg; // list of pairs <vertex_label, local degree>
+   int transitions; // nr. of transitions from the root
 
-   GNSet sel;
-   std::set<std::pair<int, int>, Compare> pq;
-   int transitions;
-
-   MISPMDD(GNSet sel, std::vector<std::pair<int, int>> data, int transitions) : sel(std::move(sel)), transitions(transitions) {
-      pq.insert(data.begin(), data.end());
-   }
-   MISPMDD(GNSet sel, std::set<std::pair<int, int>, Compare> data, int transitions) : sel(std::move(sel)), transitions(transitions), pq(data) {}
+   MISPMDD(GNSet sel, std::vector<std::pair<int, int>> data, int transitions) : sel(std::move(sel)), transitions(transitions), deg(std::move(data)) {}
 
    friend std::ostream& operator<<(std::ostream& os, const MISPMDD& m) {
       return os << "<" << m.sel << ',' << m.transitions << ">";
@@ -141,7 +131,7 @@ int main(int argc,char* argv[])
    std::cout << "TOP=" << top << "\n";
    std::vector<int> end = {};
 
-   // ========== static variable orderings =========================================================================
+  // ========== static variable orderings =========================================================================
 
    // << this variable ordering was not used in the end, as it did not perform as well >>
    // min degree heuristic static ordering
@@ -513,7 +503,6 @@ int main(int argc,char* argv[])
       }
       std::cout << "CHECKER is " << ok << "\n";
    });
-
    const auto labels = ns | GNSet { top };     // using a plain set for the labels
    std::vector<int> weight(ns.size()+1);
    // if no weights, set all to 1
@@ -534,7 +523,7 @@ int main(int argc,char* argv[])
          U.insert(i);
          pq_init.emplace_back(i, neighbors[i].size());
       }
-      return MISPMDD{U, std::move(pq_init), 0};
+      return MISPMDD{U, pq_init, 0};
    };
    const auto myTarget = [&empty_state]() {    // The sink state
       return empty_state;
@@ -545,10 +534,12 @@ int main(int argc,char* argv[])
          return u;
       }
       GNSet out = {top};
-      auto pq = s.pq;
+      auto deg = s.deg;
+      std::pair<int, int> max_pair = std::make_pair(top, -1);
+
       for (int i = 0; i < beam_n; i++) {
-         auto p = pq.extract(pq.begin()).value();
-         out.insert(p.first);
+         max_pair = deg[i];
+         out.insert(max_pair.first);
       }
       return out;
    };
@@ -563,19 +554,31 @@ int main(int argc,char* argv[])
             return std::nullopt;
          }
       }else {
-         if (label == top) {
+         if (label == top) {     // extra transition
 
             if (s.sel.size() <= beam_n) return empty_state;
 
             GNSet out = s.sel;
             GNSet removed = {};
-            auto pq = s.pq;
+            auto deg = s.deg;
 
             // remove beam
             for (int i = 0; i < beam_n; i++) {
-               auto p = pq.extract(pq.begin()).value();
-               out.remove(p.first);
-               removed.insert(p.first);
+               std::pair<int, int> max_pair = std::make_pair(top, -1);
+               max_pair = deg[i];
+
+               out.remove(max_pair.first);
+               deg[i].first = top;  // mark removed vertices by giving them label "top"
+               removed.insert(max_pair.first);
+            }
+
+            // remove encountered vertices from deg
+            for (auto it = deg.begin(); it != deg.end(); ) {
+               if (it->first == top) {
+                  it = deg.erase(it);
+               } else {
+                  it++;
+               }
             }
 
             GNSet adj_nb = {};
@@ -585,45 +588,40 @@ int main(int argc,char* argv[])
 
             // change degrees neighbours of those deleted
             if (!adj_nb.empty()) {
-               std::vector<std::pair<int, int>> temp(pq.begin(), pq.end());
-
-               for (auto& elem : temp) {
+               for (auto& elem : deg) {
                   if (adj_nb.contains(elem.first)) {
                      elem.second -= (neighbors[elem.first] & removed).size();
                   }
                }
-
-               std::set<std::pair<int, int>, MISPMDD::Compare> new_pq(
-                   std::make_move_iterator(temp.begin()),
-                   std::make_move_iterator(temp.end())
-               );
-               pq = std::move(new_pq);
             }
 
             if (out.empty()) return empty_state;
-            return MISPMDD { std::move(out), std::move(pq), s.transitions+1};
+            return MISPMDD { std::move(out), deg, s.transitions+1};
          }
 
          if (!s.sel.contains(label)) return std::nullopt; // we cannot take n (label==1) if not legal.
 
          GNSet out = s.sel;
          GNSet removed = {};
-         auto pq = s.pq;
+         auto deg = s.deg;
 
          // remove up to label
          for (int i = 0; i < beam_n; i++) {
-            auto p = pq.extract(pq.begin()).value();
-            out.remove(p.first);
-            if (p.first == label) break;
-            removed.insert(p.first);
+            std::pair<int, int> max_pair = std::make_pair(top, -1);
+            max_pair = deg[i];
+            out.remove(max_pair.first);
+            deg[i].first = top;
+            if (max_pair.first == label) break;
+            removed.insert(max_pair.first);
          }
+
          // remove neighbors label vertex
          out.diffWith(neighbors[label]);
          removed = removed | (s.sel & neighbors[label]);
 
-         for (auto it = pq.begin(); it != pq.end(); ) {
-            if (neighbors[label].contains(it->first)) {
-               it = pq.erase(it);
+         for (auto it = deg.begin(); it != deg.end(); ) {
+            if (it->first == top || neighbors[label].contains(it->first)) {
+               it = deg.erase(it);
             } else {
                it++;
             }
@@ -635,24 +633,16 @@ int main(int argc,char* argv[])
          }
 
          if (!adj_nb.empty()) {
-               std::vector<std::pair<int, int>> temp(pq.begin(), pq.end());
-
-               for (auto& elem : temp) {
-                  if (adj_nb.contains(elem.first)) {
-                     elem.second -= (neighbors[elem.first] & removed).size();
-                  }
+            for (auto& elem : deg) {
+               if (adj_nb.contains(elem.first)) {
+                  elem.second -= (neighbors[elem.first] & removed).size();
                }
-
-               std::set<std::pair<int, int>, MISPMDD::Compare> new_pq(
-                   std::make_move_iterator(temp.begin()),
-                   std::make_move_iterator(temp.end())
-               );
-               pq = std::move(new_pq);
+            }
          }
 
          if (out.empty()) return empty_state;
 
-         return MISPMDD { std::move(out), std::move(pq), s.transitions+1};
+         return MISPMDD { std::move(out), deg, s.transitions+1};
       }
    };
    const auto scf = [weight, top](const MISPMDD& s,int label) { // cost function
@@ -671,30 +661,30 @@ int main(int argc,char* argv[])
          merged_map[v] = (neighbors[v] & un).size();
       }
 
-      std::set<std::pair<int, int>, MISPMDD::Compare> new_pq;
+      std::vector<std::pair<int, int>> new_deg;
       for (auto [key, deg] : merged_map) {
-         new_pq.emplace(key, deg);
+         new_deg.emplace_back(key, deg);
       }
 
       return MISPMDD{
-         un, std::vector<std::pair<int, int>>(new_pq.begin(), new_pq.end()), std::min(s1.transitions, s2.transitions)};
+         un, new_deg, s1.transitions};
    };
    const auto eqs = [](const MISPMDD& s) -> bool {
-      // if (s.sel.size() == 0) std::cout << s.l << std::endl;
       return s.sel.size() == 0;
    };
+   // can uncomment first line to disable new local bound
    const auto local = [&weight, &neighbors, &es, top](const MISPMDD& s, LocalContext) -> double {
       // return sum(s.sel,[&weight](auto v) { return weight[v];});
 
-      int maxD = 0;
+      int maxD = 0;           // unweighted vertices, no weight considered yet
       int edg = 0;
-      for (auto& elem : s.pq) {
+      for (auto& elem : s.deg) {
          if (elem.second > maxD) maxD = elem.second;
          edg += elem.second;
       }
       edg = edg / 2.0;
       if (maxD == 0) return sum(s.sel,[&weight](auto v) { return weight[v];});
-      else return s.sel.size() - std::floor(edg/maxD);
+      else return s.sel.size() - std::ceil(edg/maxD);
    };
    const auto sDom = [](const MISPMDD& a,const MISPMDD& b) -> bool {
       return  a.sel == b.sel;
